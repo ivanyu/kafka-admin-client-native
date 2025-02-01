@@ -3,7 +3,9 @@ package me.ivanyu.kafka_admin_client_native;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.KafkaAdminClient;
+import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.acl.AclOperation;
 import org.graalvm.nativeimage.IsolateThread;
@@ -212,6 +214,56 @@ public class LibKafkaAdmin {
         UnmanagedMemory.free(createTopicsResultExt.topics());
     }
 
+    @CStruct("topic_listing_t")
+    public interface TopicListingExt extends PointerBase {
+        @CField("name")
+        void name(CCharPointer value);
+
+        @CField("name")
+        CCharPointer name();
+
+        @CField("topic_id")
+        void topicId(CCharPointer value);
+
+        @CField("topic_id")
+        CCharPointer topicId();
+
+        @CField("is_internal")
+        boolean isInternal();
+
+        @CField("is_internal")
+        void isInternal(boolean value);
+
+        TopicListingExt read(int index);
+    }
+
+    private static void freeTopicListingExt(final TopicListingExt topicListingExt) {
+        UnmanagedMemory.free(topicListingExt.name());
+        UnmanagedMemory.free(topicListingExt.topicId());
+    }
+
+    @CStruct("list_topics_result_t")
+    public interface ListTopicResultExt extends PointerBase {
+        @CField("num_topics")
+        int numTopics();
+
+        @CField("num_topics")
+        void numTopics(int value);
+
+        @CField("topics")
+        TopicListingExt topics();
+
+        @CField("topics")
+        void topics(TopicListingExt value);
+    }
+
+    private static void freeListTopicResultExt(final ListTopicResultExt listTopicResultExt) {
+        for (int i = 0; i < listTopicResultExt.numTopics(); i++) {
+            freeTopicListingExt(listTopicResultExt.topics().read(i));
+        }
+        UnmanagedMemory.free(listTopicResultExt.topics());
+    }
+
     @CEntryPoint(name = "create_admin_client")
     public static ObjectHandle createAdminClient(final IsolateThread thread,
                                                  final int kvCount,
@@ -368,6 +420,48 @@ public class LibKafkaAdmin {
     public static void freeCreateTopicsResult(@CConst final IsolateThread thread,
                                               @CConst final CreateTopicsResultExt createTopicsResultExt) {
         freeCreateTopicsResultExt(createTopicsResultExt);
+    }
+
+    @CEntryPoint(name = "list_topics")
+    public static ListTopicResultExt listTopics(@CConst final IsolateThread thread,
+                                                @CConst final ObjectHandle handle) {
+        final AdminClient client = ObjectHandles.getGlobal().get(handle);
+        if (client == null) {
+            LOGGER.error("Invalid handler, ignoring");
+            return WordFactory.nullPointer();
+        }
+
+        // TODO support ListTopicsOptions
+        final ListTopicsResult listTopicsResult = client.listTopics();
+        final Collection<TopicListing> topicListings;
+        try {
+            topicListings = listTopicsResult.listings().get();
+        } catch (final Exception e) {
+            LOGGER.error("Error listing topics", e);
+            return WordFactory.nullPointer();
+        }
+
+        final int numTopics = topicListings.size();
+        final ListTopicResultExt listTopicResultExt = UnmanagedMemory.malloc(SizeOf.get(ListTopicResultExt.class));
+        final TopicListingExt topicListingExtArray = UnmanagedMemory.malloc(SizeOf.get(TopicListingExt.class) * numTopics);
+        int i = 0;
+        for (final TopicListing topicListing : topicListings) {
+            final TopicListingExt topicListingExt = topicListingExtArray.read(i);
+            i += 1;
+
+            topicListingExt.name(toCStringUnmanaged(topicListing.name()));
+            topicListingExt.topicId(toCStringUnmanaged(topicListing.topicId().toString()));
+            topicListingExt.isInternal(topicListing.isInternal());
+        }
+        listTopicResultExt.numTopics(numTopics);
+        listTopicResultExt.topics(topicListingExtArray);
+        return listTopicResultExt;
+    }
+
+    @CEntryPoint(name = "free_list_topics_result")
+    public static void freeListTopicResult(@CConst final IsolateThread thread,
+                                           @CConst final ListTopicResultExt listTopicResultExt) {
+        freeListTopicResultExt(listTopicResultExt);
     }
 
     private static CCharPointer toCStringUnmanaged(final String string) {
