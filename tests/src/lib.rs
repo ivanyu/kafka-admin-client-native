@@ -13,6 +13,8 @@ mod tests {
     use std::os::raw::c_void;
     use std::process::Command;
     use std::ptr::{null, null_mut};
+    use std::thread::{sleep, Thread};
+    use std::time::Duration;
 
     const KAFKA_PORT_1: u16 = 19092;
     const KAFKA_PORT_2: u16 = 29092;
@@ -148,7 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_topics() {
+    fn test_create_list_topics() {
         unsafe {
             let thread = create_isolate();
             let handle = create_client(thread);
@@ -167,31 +169,86 @@ mod tests {
                     replication_factor: 2,
                 },
             ];
-            let mut result = create_topics(thread, handle, new_topics.len() as c_int, new_topics.as_ptr());
+            let mut result = create_topics(
+                thread,
+                handle,
+                new_topics.len() as c_int,
+                new_topics.as_ptr(),
+            );
 
             assert_eq!((*result).num_topics, 2);
 
             let created_topic1 = (*result).topics.offset(0);
-            assert_eq!(CStr::from_ptr((*created_topic1).topic).to_str().unwrap(), "topic1");
+            assert_eq!(
+                CStr::from_ptr((*created_topic1).topic).to_str().unwrap(),
+                "topic1"
+            );
             if !(*created_topic1).error.is_null() {
-                println!("Error: {}", CStr::from_ptr((*created_topic1).error).to_str().unwrap());
+                println!(
+                    "Error: {}",
+                    CStr::from_ptr((*created_topic1).error).to_str().unwrap()
+                );
             }
             assert!((*created_topic1).error.is_null());
             assert!(!(*created_topic1).uuid.is_null());
+            let created_topic1_id = CStr::from_ptr((*created_topic1).uuid)
+                .to_str()
+                .unwrap()
+                .to_string();
             assert_eq!((*created_topic1).num_partitions, 2);
             assert_eq!((*created_topic1).replication_factor, 1);
 
             let created_topic2 = (*result).topics.offset(1);
-            assert_eq!(CStr::from_ptr((*created_topic2).topic).to_str().unwrap(), "topic2");
+            assert_eq!(
+                CStr::from_ptr((*created_topic2).topic).to_str().unwrap(),
+                "topic2"
+            );
             if !(*created_topic2).error.is_null() {
-                println!("Error: {}", CStr::from_ptr((*created_topic2).error).to_str().unwrap());
+                println!(
+                    "Error: {}",
+                    CStr::from_ptr((*created_topic2).error).to_str().unwrap()
+                );
             }
             assert!((*created_topic2).error.is_null());
             assert!(!(*created_topic2).uuid.is_null());
+            let created_topic2_id = CStr::from_ptr((*created_topic2).uuid)
+                .to_str()
+                .unwrap()
+                .to_owned();
             assert_eq!((*created_topic2).num_partitions, 1);
             assert_eq!((*created_topic2).replication_factor, 2);
 
             free_create_topics_result(thread, result);
+
+            sleep(Duration::from_secs(1));
+
+            let mut result = list_topics(thread, handle);
+
+            assert_eq!((*result).num_topics, 2);
+
+            let listed_topic1 = (*result).topics.offset(0);
+            assert_eq!(
+                CStr::from_ptr((*listed_topic1).name).to_str().unwrap(),
+                "topic1"
+            );
+            assert_eq!(
+                CStr::from_ptr((*listed_topic1).topic_id).to_str().unwrap(),
+                created_topic1_id
+            );
+            assert!(!(*listed_topic1).is_internal);
+
+            let listed_topic2 = (*result).topics.offset(1);
+            assert_eq!(
+                CStr::from_ptr((*listed_topic2).name).to_str().unwrap(),
+                "topic2"
+            );
+            assert_eq!(
+                CStr::from_ptr((*listed_topic2).topic_id).to_str().unwrap(),
+                created_topic2_id
+            );
+            assert!(!(*listed_topic2).is_internal);
+
+            free_list_topics_result(thread, result);
 
             delete_admin_client(thread, handle);
             tear_down_isolate(thread);

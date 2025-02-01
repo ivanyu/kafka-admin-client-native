@@ -1,6 +1,8 @@
 #ifndef __KAFKA_ADMIN_STRUCTS
 #define __KAFKA_ADMIN_STRUCTS
 
+#include <stdbool.h>
+
 typedef struct __key_value_t {
   const char * const key;
   const char * const value;
@@ -43,5 +45,16 @@ typedef struct __create_topics_result_t {
     int num_topics;
     const create_topic_result_t * topics;
 } create_topics_result_t;
+
+typedef struct __topic_listing_t {
+    const char * name;
+    const char * topic_id;
+    bool is_internal;
+} topic_listing_t;
+
+typedef struct __list_topics_result_t {
+    int num_topics;
+    const topic_listing_t * topics;
+} list_topics_result_t;
 
 #endif
