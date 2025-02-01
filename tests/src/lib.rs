@@ -21,6 +21,8 @@ mod tests {
 
     impl KafkaCluster {
         fn new() -> KafkaCluster {
+            KafkaCluster::clean();
+
             let output = Command::new("docker")
                 .args(["compose", "up", "--detach", "--wait"])
                 .output()
@@ -32,15 +34,19 @@ mod tests {
         fn bootstrap_servers(&self) -> String {
             format!("127.0.0.1:{KAFKA_PORT_1},127.0.0.1:{KAFKA_PORT_2}")
         }
+
+        fn clean() {
+            let output = Command::new("docker")
+                .args(["compose", "down", "--remove-orphans"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+        }
     }
 
     impl Drop for KafkaCluster {
         fn drop(&mut self) {
-            let output = Command::new("docker")
-                .args(["compose", "kill", "--remove-orphans"])
-                .output()
-                .unwrap();
-            assert!(output.status.success());
+            KafkaCluster::clean();
         }
     }
 
@@ -137,6 +143,57 @@ mod tests {
             let thread = create_isolate();
             assert!(describe_cluster(thread, null()).is_null());
             assert!(describe_cluster(thread, 10 as *const c_void).is_null());
+            tear_down_isolate(thread);
+        }
+    }
+
+    #[test]
+    fn test_create_topics() {
+        unsafe {
+            let thread = create_isolate();
+            let handle = create_client(thread);
+
+            let topic1_name = CString::new("topic1").unwrap();
+            let topic2_name = CString::new("topic2").unwrap();
+            let new_topics: [new_topic_t; 2] = [
+                new_topic_t {
+                    name: topic1_name.as_ptr(),
+                    num_partitions: 2,
+                    replication_factor: 1,
+                },
+                new_topic_t {
+                    name: topic2_name.as_ptr(),
+                    num_partitions: 1,
+                    replication_factor: 2,
+                },
+            ];
+            let mut result = create_topics(thread, handle, new_topics.len() as c_int, new_topics.as_ptr());
+
+            assert_eq!((*result).num_topics, 2);
+
+            let created_topic1 = (*result).topics.offset(0);
+            assert_eq!(CStr::from_ptr((*created_topic1).topic).to_str().unwrap(), "topic1");
+            if !(*created_topic1).error.is_null() {
+                println!("Error: {}", CStr::from_ptr((*created_topic1).error).to_str().unwrap());
+            }
+            assert!((*created_topic1).error.is_null());
+            assert!(!(*created_topic1).uuid.is_null());
+            assert_eq!((*created_topic1).num_partitions, 2);
+            assert_eq!((*created_topic1).replication_factor, 1);
+
+            let created_topic2 = (*result).topics.offset(1);
+            assert_eq!(CStr::from_ptr((*created_topic2).topic).to_str().unwrap(), "topic2");
+            if !(*created_topic2).error.is_null() {
+                println!("Error: {}", CStr::from_ptr((*created_topic2).error).to_str().unwrap());
+            }
+            assert!((*created_topic2).error.is_null());
+            assert!(!(*created_topic2).uuid.is_null());
+            assert_eq!((*created_topic2).num_partitions, 1);
+            assert_eq!((*created_topic2).replication_factor, 2);
+
+            free_create_topics_result(thread, result);
+
+            delete_admin_client(thread, handle);
             tear_down_isolate(thread);
         }
     }
